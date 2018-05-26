@@ -5,6 +5,8 @@ This CHANGELOG follows the format listed at [Our CHANGELOG Guidelines ](https://
 Which is based on [Keep A Changelog](http://keepachangelog.com/)
 
 ## [Unreleased]
+### Added
+ - metrics-docker-stats-influxdb.rb: add a metrics provider optimized for InfluxDB
 
 ## [3.2.0] - 2018-11-22
 ### Fixed
