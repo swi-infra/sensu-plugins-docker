@@ -95,6 +95,18 @@ class DockerStatsMetrics < Sensu::Plugin::Metric::CLI::Influxdb
          short: '-t TAGS',
          long: '--tags TAGS'
 
+  option :names_as_tags,
+        description: "Include container name as a tag",
+        long: "--name-as-tags",
+        boolean: true,
+        default: false
+
+  option :with_labels,
+         description: "Include labels from containers as tags",
+         long: "--labels-as-tags",
+         boolean: true,
+         default: false
+
   option :extra_stats,
          description: 'List of key=value stats separated by commas',
          short: '-e STATS',
@@ -116,9 +128,9 @@ class DockerStatsMetrics < Sensu::Plugin::Metric::CLI::Influxdb
 
   def extra_stats
     return {} unless config[:extra_stats]
-    config[:extra_stats].split(',').map { |x| 
+    config[:extra_stats].split(',').map { |x|
         k_v = x.split('=')
-        k_v[1] = 
+        k_v[1] =
             if k_v[1][/^[0-9]*$/]
                 k_v[1].to_i
             elsif k_v[1][/^[0-9\.]*$/]
@@ -159,11 +171,22 @@ class DockerStatsMetrics < Sensu::Plugin::Metric::CLI::Influxdb
   def output_stats(container, stats)
     dotted_stats = Hash.to_dotted_hash stats
     all_stats = {}
+    name = nil
+    id = nil
+    stat_name = "#{config[:scheme]}"
+    unless config[:names_as_tags]
+      stat_name += ".#{container}"
+    end
     dotted_stats.each do |key, value|
       next if key == 'read' # unecessary timestamp
       next if key == 'preread' # unecessary timestamp
       next if value.is_a?(Array)
       value.delete!('/') if key == 'name'
+      if key == 'name'
+        name = value
+      elsif key == 'id'
+        id = value
+      end
       value = "\"#{value}\"" if value.is_a?(String)
       all_stats[key] = value
     end
@@ -175,7 +198,7 @@ class DockerStatsMetrics < Sensu::Plugin::Metric::CLI::Influxdb
     if config[:cpupercent]
       all_stats['cpu_stats.usage_percent'] = calculate_cpu_percent(stats)
     end
-    output "#{config[:scheme]}.#{container}", all_stats.map{|k,v| "#{k}=#{v}"}.join(","), container_tags(container)
+    output stat_name, all_stats.map{|k,v| "#{k}=#{v}"}.join(","), container_tags(container, name)
   end
 
   def list_containers
@@ -204,21 +227,31 @@ class DockerStatsMetrics < Sensu::Plugin::Metric::CLI::Influxdb
     parse_json(response)
   end
 
-  def container_tags(container)
-    tags = ''
-    path = "/containers/#{container}/json"
-    response = @client.call(path)
-    if response.code.to_i == 404
-      critical "#{config[:container]} is not running on #{@client.uri}"
-    end
-    inspect = parse_json(response)
+  def container_tags(container, name)
     tag_list = []
+
+    if name and config[:names_as_tags]
+      tag_list << "name=#{name}"
+    end
+
+    # From args
     unless config[:tags].nil?
       tag_list = config[:tags].split(',')
     end
-    inspect['Config']['Labels'].each do |k,v|
-      tag_list << "#{k}=#{v}"
+
+    # From container
+    if config[:with_labels]
+      path = "/containers/#{container}/json"
+      response = @client.call(path)
+      if response.code.to_i == 404
+        critical "#{config[:container]} is not running on #{@client.uri}"
+      end
+      inspect = parse_json(response)
+      inspect['Config']['Labels'].each do |k,v|
+        tag_list << "#{k}=\"#{v}\""
+      end
     end
+
     if tag_list.empty?
       tag_list = nil
     end
